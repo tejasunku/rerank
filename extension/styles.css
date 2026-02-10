@@ -1,0 +1,30 @@
+/*
+ * Rerank Everything - Styles
+ * CSS classes used by the extension to modify the YouTube feed
+ */
+
+/* Hide filtered-out videos */
+.rerank-hidden {
+  display: none !important;
+}
+
+/* Visual indicator that the extension is active */
+.rerank-boosted {
+  outline: 2px solid #4caf50;
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+
+/* Badge shown on filtered videos (stretch goal) */
+.rerank-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: #4caf50;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: bold;
+  z-index: 1000;
+}

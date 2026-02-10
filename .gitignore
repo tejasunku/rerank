@@ -1,0 +1,24 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node (in case we add build tools later)
+node_modules/
+
+# Extension build artifacts
+*.zip
+*.crx
+
+# Environment / secrets
+.env
+
+# Instructor materials
+DAY2_LESSON_PLAN.md
+presentation.html
+tree_swing.png

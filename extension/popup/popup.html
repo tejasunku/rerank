@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Rerank Everything</h1>
+    <p class="subtitle">Take back your feed</p>
+
+    <div class="toggle-row">
+      <label for="enabled">Extension Enabled</label>
+      <input type="checkbox" id="enabled" checked>
+    </div>
+
+    <div class="stats">
+      <div class="stat">
+        <span class="stat-number" id="hidden-count">0</span>
+        <span class="stat-label">Hidden</span>
+      </div>
+      <div class="stat">
+        <span class="stat-number" id="boosted-count">0</span>
+        <span class="stat-label">Boosted</span>
+      </div>
+    </div>
+
+    <!-- Stretch goal: settings UI -->
+    <!--
+    <h2>Blocked Keywords</h2>
+    <textarea id="blocked-keywords" placeholder="One keyword per line"></textarea>
+
+    <h2>Boosted Keywords</h2>
+    <textarea id="boosted-keywords" placeholder="One keyword per line"></textarea>
+
+    <button id="save">Save Settings</button>
+    -->
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
