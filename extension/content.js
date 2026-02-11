@@ -13,73 +13,104 @@ console.log("[Rerank Everything] Extension loaded on YouTube");
 
 // ============================================================
 // STEP 1: SCRAPER
-// TODO: Scraper Team implements this
-// Find all video recommendation cards on the YouTube homepage
-// and extract: title, channel name, description, thumbnail URL
+// Find all video recommendation cards on the page and extract
+// their data: title, channel name, and a reference to the element
 // ============================================================
 
 function scrapeVideoCards() {
-  // TODO: Query the DOM for YouTube video cards
-  // Hint: YouTube uses <ytd-rich-item-renderer> for homepage videos
-  //       Each card contains a #video-title, #channel-name, etc.
-
   const cards = [];
 
-  // Example of what a scraped card object should look like:
-  // {
-  //   element: <the DOM element>,
-  //   title: "Video Title Here",
-  //   channel: "Channel Name",
-  //   description: "...",
-  //   thumbnailUrl: "https://...",
-  // }
+  // YouTube uses different elements depending on the page:
+  //   Homepage:     ytd-rich-item-renderer
+  //   Search:       ytd-video-renderer
+  //   Sidebar:      ytd-compact-video-renderer
+  const videoElements = document.querySelectorAll(
+    "ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer"
+  );
+
+  videoElements.forEach((element) => {
+    const titleEl = element.querySelector("#video-title");
+    const channelEl = element.querySelector(
+      "ytd-channel-name #text, #channel-name #text, ytd-channel-name yt-formatted-string"
+    );
+
+    if (titleEl) {
+      cards.push({
+        element: element,
+        title: (titleEl.textContent || "").trim(),
+        channel: channelEl ? (channelEl.textContent || "").trim() : "",
+        visible: true,
+        score: 0,
+      });
+    }
+  });
 
   return cards;
 }
 
 // ============================================================
 // STEP 2: FILTER
-// TODO: Filter/Rerank Team implements this
 // Given a list of scraped cards, decide which ones to HIDE
+// based on the block rules below
 // ============================================================
 
-// These are the default filter rules - students should customize these!
+// *** CUSTOMIZE THESE! ***
+// Add channels and keywords you want to filter out.
+// Uncomment the examples or add your own.
 const BLOCK_RULES = {
-  // Channels to always hide
+  // Channels to always hide (case-insensitive)
   blockedChannels: [
     // "ChannelNameHere",
   ],
 
-  // If a title contains any of these keywords, hide it
+  // If a title contains any of these keywords, hide it (case-insensitive)
   blockedKeywords: [
     // "prank",
     // "drama",
-    // "react",
+    // "clickbait",
+    // "you won't believe",
+    // "gone wrong",
   ],
 };
 
 function filterCards(cards) {
-  // TODO: Loop through cards and mark each as visible or hidden
-  // based on the BLOCK_RULES above
+  return cards.map((card) => {
+    const titleLower = card.title.toLowerCase();
+    const channelLower = card.channel.toLowerCase();
 
-  return cards;
+    // Check if the channel is in the blocked list
+    const channelBlocked = BLOCK_RULES.blockedChannels.some((ch) =>
+      channelLower.includes(ch.toLowerCase())
+    );
+
+    // Check if any blocked keyword appears in the title
+    const keywordBlocked = BLOCK_RULES.blockedKeywords.some((kw) =>
+      titleLower.includes(kw.toLowerCase())
+    );
+
+    card.visible = !channelBlocked && !keywordBlocked;
+    return card;
+  });
 }
 
 // ============================================================
 // STEP 3: RERANKER
-// TODO: Filter/Rerank Team implements this
-// Score the remaining visible videos and sort by score
+// Score the remaining visible videos so we know which ones
+// are the best. Higher score = better content.
 // ============================================================
 
+// *** CUSTOMIZE THESE! ***
+// Add keywords and channels you want to see MORE of.
 const BOOST_RULES = {
-  // Keywords in titles that should get boosted to the top
+  // Keywords in titles that should get boosted (each match = +10 points)
   boostedKeywords: [
     // "tutorial",
     // "explained",
     // "how to",
+    // "deep dive",
   ],
 
-  // Channels whose content should always rank higher
+  // Channels whose content should always rank higher (+20 points)
   boostedChannels: [
     // "3Blue1Brown",
     // "Fireship",
@@ -87,26 +118,76 @@ const BOOST_RULES = {
 };
 
 function rerankCards(cards) {
-  // TODO: Assign a score to each card based on BOOST_RULES
-  // Sort by score descending (best content first)
+  return cards
+    .map((card) => {
+      if (!card.visible) return card;
 
-  return cards;
+      let score = 0;
+      const titleLower = card.title.toLowerCase();
+      const channelLower = card.channel.toLowerCase();
+
+      // Boost by keyword match in title
+      BOOST_RULES.boostedKeywords.forEach((kw) => {
+        if (titleLower.includes(kw.toLowerCase())) {
+          score += 10;
+        }
+      });
+
+      // Boost by channel match
+      BOOST_RULES.boostedChannels.forEach((ch) => {
+        if (channelLower.includes(ch.toLowerCase())) {
+          score += 20;
+        }
+      });
+
+      card.score = score;
+      return card;
+    })
+    .sort((a, b) => {
+      // Hidden cards go to the end
+      if (a.visible !== b.visible) return a.visible ? -1 : 1;
+      // Among visible cards, sort by score (highest first)
+      return b.score - a.score;
+    });
 }
 
 // ============================================================
 // STEP 4: RENDER
-// TODO: Extension/UI Team implements this
-// Apply the filter and rerank results to the actual page
+// Apply the filter and rerank results to the actual page.
+// - Filtered videos get hidden with a CSS class
+// - Boosted videos get a green outline
 // ============================================================
 
 function applyChanges(cards) {
-  // TODO: For each card:
-  //   - If filtered out: hide the DOM element (display: none or add a CSS class)
-  //   - If kept: reorder elements in the DOM based on score
+  let hiddenCount = 0;
+  let boostedCount = 0;
 
-  // Hint: You can reorder DOM elements by appending them to their
-  // parent in the desired order:
-  //   parent.appendChild(child) moves the child to the end
+  cards.forEach((card) => {
+    if (!card.visible) {
+      // Hide filtered-out videos
+      card.element.classList.add("rerank-hidden");
+      card.element.classList.remove("rerank-boosted");
+      hiddenCount++;
+    } else {
+      // Show kept videos
+      card.element.classList.remove("rerank-hidden");
+
+      // Highlight boosted videos with a green outline
+      if (card.score > 0) {
+        card.element.classList.add("rerank-boosted");
+        boostedCount++;
+      } else {
+        card.element.classList.remove("rerank-boosted");
+      }
+    }
+  });
+
+  // Save stats so the popup can display them
+  chrome.storage.local.set({ hiddenCount, boostedCount });
+
+  console.log(
+    `[Rerank Everything] Hidden: ${hiddenCount}, Boosted: ${boostedCount}`
+  );
 }
 
 // ============================================================
@@ -114,16 +195,36 @@ function applyChanges(cards) {
 // ============================================================
 
 function runPipeline() {
-  console.log("[Rerank Everything] Running pipeline...");
+  // Check if the extension is enabled (toggle in popup)
+  chrome.storage.local.get(["enabled"], (result) => {
+    if (result.enabled === false) {
+      console.log("[Rerank Everything] Extension is disabled");
+      // Remove all our CSS classes when disabled
+      document.documentElement.classList.remove("rerank-active");
+      document
+        .querySelectorAll(".rerank-hidden, .rerank-boosted")
+        .forEach((el) => {
+          el.classList.remove("rerank-hidden", "rerank-boosted");
+        });
+      return;
+    }
 
-  const cards = scrapeVideoCards();
-  console.log(`[Rerank Everything] Found ${cards.length} video cards`);
+    // Light pink background proves the extension is running
+    document.documentElement.classList.add("rerank-active");
 
-  const filtered = filterCards(cards);
-  const reranked = rerankCards(filtered);
-  applyChanges(reranked);
+    console.log("[Rerank Everything] Running pipeline...");
 
-  console.log("[Rerank Everything] Feed updated!");
+    const cards = scrapeVideoCards();
+    console.log(`[Rerank Everything] Found ${cards.length} video cards`);
+
+    if (cards.length === 0) return;
+
+    const filtered = filterCards(cards);
+    const reranked = rerankCards(filtered);
+    applyChanges(reranked);
+
+    console.log("[Rerank Everything] Feed updated!");
+  });
 }
 
 // YouTube is a Single Page App - the page doesn't fully reload
@@ -137,7 +238,7 @@ let debounceTimer = null;
 const observer = new MutationObserver(() => {
   // Debounce: wait for YouTube to finish loading before we act
   clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(runPipeline, 1000);
+  debounceTimer = setTimeout(runPipeline, 1500);
 });
 
 // Start observing once the page is ready

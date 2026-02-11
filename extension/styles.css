@@ -8,7 +8,16 @@
   display: none !important;
 }
 
-/* Visual indicator that the extension is active */
+/* Light pink background when extension is active - proves it's running */
+html.rerank-active,
+html.rerank-active body,
+html.rerank-active ytd-app,
+html.rerank-active #content,
+html.rerank-active ytd-browse {
+  background-color: #ffe6ee !important;
+}
+
+/* Visual indicator on boosted videos - green outline */
 .rerank-boosted {
   outline: 2px solid #4caf50;
   outline-offset: -2px;

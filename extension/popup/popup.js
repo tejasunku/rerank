@@ -1,22 +1,24 @@
 /**
  * Rerank Everything - Popup Script
- * Handles the extension popup UI
+ * Handles the extension popup UI: toggle on/off and display stats
  */
-
-// TODO: Extension/UI Team
-// - Load stats from chrome.storage
-// - Toggle extension on/off
-// - (Stretch) Save/load filter settings
 
 document.addEventListener("DOMContentLoaded", () => {
   const enabledToggle = document.getElementById("enabled");
+  const hiddenCountEl = document.getElementById("hidden-count");
+  const boostedCountEl = document.getElementById("boosted-count");
 
-  // Load saved state
-  chrome.storage.local.get(["enabled"], (result) => {
-    enabledToggle.checked = result.enabled !== false; // default to on
-  });
+  // Load saved state and stats from storage
+  chrome.storage.local.get(
+    ["enabled", "hiddenCount", "boostedCount"],
+    (result) => {
+      enabledToggle.checked = result.enabled !== false; // default: on
+      hiddenCountEl.textContent = result.hiddenCount || 0;
+      boostedCountEl.textContent = result.boostedCount || 0;
+    }
+  );
 
-  // Save state on toggle
+  // Save state when the toggle is clicked
   enabledToggle.addEventListener("change", () => {
     chrome.storage.local.set({ enabled: enabledToggle.checked });
   });
