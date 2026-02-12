@@ -483,3 +483,106 @@ observer.observe(document.body, {
 });
 
 runPipeline();
+
+// ============================================================
+// TESTING INTERFACE - Exposed via window.rerankTest
+// Usage: Open console on YouTube and type rerankTest.shuffle()
+// ============================================================
+
+window.rerankTest = {
+  shuffle: function() {
+    console.log("[Rerank Everything] Shuffling videos...");
+    const cards = scrapeVideoData();
+    for (let i = cards.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [cards[i], cards[j]] = [cards[j], cards[i]];
+    }
+    cards.forEach((card, i) => { card.score = cards.length - i; });
+    reorderVideos(cards);
+    console.log("[Rerank Everything] Shuffled " + cards.length + " videos!");
+  },
+
+  reverse: function() {
+    console.log("[Rerank Everything] Reversing video order...");
+    const cards = scrapeVideoData();
+    cards.forEach((card, i) => { card.score = cards.length - i; });
+    cards.reverse();
+    reorderVideos(cards);
+    console.log("[Rerank Everything] Reversed " + cards.length + " videos!");
+  },
+
+  boostChannel: function(channelName) {
+    console.log("[Rerank Everything] Boosting channel: " + channelName);
+    const cards = scrapeVideoData();
+    cards.forEach((card) => {
+      if (card.data.channelName.toLowerCase().includes(channelName.toLowerCase())) {
+        card.score = 1000;
+        console.log("  Boosted: " + card.data.title + " by " + card.data.channelName);
+      } else {
+        card.score = 0;
+      }
+    });
+    reorderVideos(cards.filter(c => c.score > 0).concat(cards.filter(c => c.score === 0)));
+  },
+
+  boostKeyword: function(keyword) {
+    console.log("[Rerank Everything] Boosting keyword: " + keyword);
+    const cards = scrapeVideoData();
+    cards.forEach((card) => {
+      if (card.data.title.toLowerCase().includes(keyword.toLowerCase())) {
+        card.score = 1000;
+        console.log("  Boosted: " + card.data.title);
+      } else {
+        card.score = 0;
+      }
+    });
+    reorderVideos(cards.filter(c => c.score > 0).concat(cards.filter(c => c.score === 0)));
+  },
+
+  hideKeyword: function(keyword) {
+    console.log("[Rerank Everything] Hiding keyword: " + keyword);
+    const cards = scrapeVideoData();
+    let hidden = 0;
+    cards.forEach((card) => {
+      if (card.data.title.toLowerCase().includes(keyword.toLowerCase())) {
+        card.visible = false;
+        hidden++;
+      }
+    });
+    reorderVideos(cards);
+    console.log("[Rerank Everything] Hidden " + hidden + " videos");
+  },
+
+  reset: function() {
+    console.log("[Rerank Everything] Resetting order (by originalIndex)...");
+    const cards = scrapeVideoData();
+    cards.sort((a, b) => a.originalIndex - b.originalIndex);
+    cards.forEach(c => { c.visible = true; c.score = 0; });
+    reorderVideos(cards);
+    console.log("[Rerank Everything] Reset " + cards.length + " videos!");
+  },
+
+  list: function() {
+    const cards = scrapeVideoData();
+    console.log("[Rerank Everything] Listing " + cards.length + " videos:");
+    cards.forEach((card, i) => {
+      console.log((i + 1) + ". [" + card.data.videoId + "] " + card.data.title + " - " + card.data.channelName);
+    });
+  },
+
+  help: function() {
+    console.log(`
+[Rerank Everything] Test Commands:
+  rerankTest.shuffle()        - Randomly shuffle videos
+  rerankTest.reverse()        - Reverse current order
+  rerankTest.boostChannel(name) - Boost videos from a channel
+  rerankTest.boostKeyword(word) - Boost videos with keyword in title
+  rerankTest.hideKeyword(word)  - Hide videos with keyword in title
+  rerankTest.reset()          - Reset to original order
+  rerankTest.list()           - List all videos with IDs
+  rerankTest.help()           - Show this help
+`);
+  }
+};
+
+console.log("[Rerank Everything] Test interface loaded! Type rerankTest.help() for commands.");
