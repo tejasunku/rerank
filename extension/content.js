@@ -10,22 +10,42 @@
  */
 
 // ============================================================
-// CONFIG
+// CONFIG FLAGS
+// ============================================================
+//
+// DEBUG (boolean)
+//   - true:  Verbose console logging for development/debugging
+//   - false: Minimal logging (only startup message)
+//   - Default: false
+//
+// MAX_CARDS (number)
+//   - Maximum number of unique video cards to process
+//   - Limits how many videos we extract and reorder
+//   - Default: 25
+//
+// STOP_LOADING_AFTER_MAX (boolean)
+//   - true:  Stop YouTube from loading more videos after MAX_CARDS reached
+//            Prevents page mutations from undoing reordering
+//   - false: YouTube continues infinite scroll normally
+//   - Default: true
+//
 // ============================================================
 
 const DEBUG = false;
 const MAX_CARDS = 25;
+const STOP_LOADING_AFTER_MAX = true;
 
 // Logging helper - only logs when DEBUG is true
 function log(...args) {
-  if (DEBUG) console.log("[Rerank Everything]", ...args);
+  if (DEBUG) console.log("[Rerank]", ...args);
 }
 
 // State tracking
 let isProcessing = false;
 let processedVideoIds = new Set();
+let loadingStopped = false;
 
-console.log("[Rerank] Ready. DEBUG=" + DEBUG);
+console.log("[Rerank] Ready. DEBUG=" + DEBUG + ", MAX_CARDS=" + MAX_CARDS + ", STOP_LOADING_AFTER_MAX=" + STOP_LOADING_AFTER_MAX);
 
 // ============================================================
 // SELECTORS - Based on DeArrow's comprehensive YouTube DOM knowledge
@@ -496,7 +516,83 @@ function runPipeline() {
 
     log("Feed updated! Total unique videos:", processedVideoIds.size);
     isProcessing = false;
+
+    // If we've reached MAX_CARDS and STOP_LOADING_AFTER_MAX is enabled, stop YouTube
+    if (STOP_LOADING_AFTER_MAX && processedVideoIds.size >= MAX_CARDS && !loadingStopped) {
+      stopYouTubeLoading();
+    }
   });
+}
+
+// ============================================================
+// STOP YOUTUBE LOADING
+// Prevents YouTube from loading more videos via infinite scroll
+// ============================================================
+
+function stopYouTubeLoading() {
+  if (loadingStopped) return;
+  loadingStopped = true;
+
+  log("Stopping YouTube from loading more videos...");
+
+  // 1. Disconnect our mutation observer to prevent re-triggering
+  observer.disconnect();
+  log(" - Disconnected mutation observer");
+
+  // 2. Remove YouTube's sentinel/continuation elements that trigger infinite scroll
+  // These are invisible elements at the bottom that trigger loading when they enter viewport
+  const sentinelSelectors = [
+    "ytd-continuation-item-renderer",
+    "ytd-rich-grid-continuation-item-renderer", 
+    "#continuations",
+    ".continuation-item",
+    "yt-next-continuation"
+  ];
+
+  let removedCount = 0;
+  sentinelSelectors.forEach(selector => {
+    document.querySelectorAll(selector).forEach(el => {
+      el.remove();
+      removedCount++;
+    });
+  });
+  log(" - Removed " + removedCount + " sentinel elements");
+
+  // 3. Hide any remaining continuation containers
+  const continuationContainers = document.querySelectorAll(
+    "ytd-item-section-renderer, ytd-rich-section-renderer"
+  );
+  continuationContainers.forEach(container => {
+    const continuation = container.querySelector("ytd-continuation-item-renderer, button");
+    if (continuation) {
+      continuation.style.display = "none";
+    }
+  });
+
+  // 4. Set a flag to prevent YouTube's scroll event handlers from loading more
+  // This intercepts YouTube's XHR requests for more videos
+  window.rerankLoadingStopped = true;
+
+  console.log("[Rerank] YouTube loading stopped. " + processedVideoIds.size + " videos loaded.");
+}
+
+function resumeYouTubeLoading() {
+  if (!loadingStopped) return;
+  loadingStopped = false;
+  window.rerankLoadingStopped = false;
+  processedVideoIds.clear();
+
+  // Re-connect observer
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
+
+  // Scroll to trigger YouTube's lazy loading
+  window.scrollBy(0, 100);
+  window.scrollBy(0, -100);
+
+  console.log("[Rerank] YouTube loading resumed. Scrolling may load more videos.");
 }
 
 let debounceTimer = null;
@@ -639,7 +735,29 @@ window.addEventListener("message", function(event) {
       console.log("  - Unique videos seen:", processedVideoIds.size);
       console.log("  - MAX_CARDS:", MAX_CARDS);
       console.log("  - DEBUG:", DEBUG);
+      console.log("  - STOP_LOADING_AFTER_MAX:", STOP_LOADING_AFTER_MAX);
+      console.log("  - Loading stopped:", loadingStopped);
       console.log("  - Processing:", isProcessing);
+      break;
+    }
+
+    case "stopLoading": {
+      stopYouTubeLoading();
+      break;
+    }
+
+    case "resumeLoading": {
+      resumeYouTubeLoading();
+      break;
+    }
+
+    case "enable": {
+      loadingStopped = false;
+      window.rerankLoadingStopped = false;
+      processedVideoIds.clear();
+      observer.observe(document.body, { childList: true, subtree: true });
+      runPipeline();
+      console.log("[Rerank] Re-enabled and cleared state");
       break;
     }
 
@@ -655,6 +773,9 @@ window.addEventListener("message", function(event) {
   rt.list()              - List all videos with IDs
   rt.run()               - Re-run the pipeline
   rt.status()            - Show current status
+  rt.stopLoading()       - Stop YouTube from loading more videos
+  rt.resumeLoading()     - Resume YouTube loading (clears state)
+  rt.enable()            - Re-enable and clear all state
   rt.help()              - Show this help
 `);
       break;
@@ -665,4 +786,4 @@ window.addEventListener("message", function(event) {
   }
 });
 
-console.log("[Rerank] Ready. Paste this to get test commands: var rt={shuffle:()=>window.postMessage({type:'RERANK_TEST',command:'shuffle'},'*'),reverse:()=>window.postMessage({type:'RERANK_TEST',command:'reverse'},'*'),boostChannel:a=>window.postMessage({type:'RERANK_TEST',command:'boostChannel',arg:a},'*'),boostKeyword:a=>window.postMessage({type:'RERANK_TEST',command:'boostKeyword',arg:a},'*'),hideKeyword:a=>window.postMessage({type:'RERANK_TEST',command:'hideKeyword',arg:a},'*'),reset:()=>window.postMessage({type:'RERANK_TEST',command:'reset'},'*'),list:()=>window.postMessage({type:'RERANK_TEST',command:'list'},'*'),run:()=>window.postMessage({type:'RERANK_TEST',command:'run'},'*'),status:()=>window.postMessage({type:'RERANK_TEST',command:'status'},'*'),help:()=>window.postMessage({type:'RERANK_TEST',command:'help'},'*')}; rt.help()");
+console.log("[Rerank] Ready. Paste this for test commands: var rt={shuffle:()=>window.postMessage({type:'RERANK_TEST',command:'shuffle'},'*'),reverse:()=>window.postMessage({type:'RERANK_TEST',command:'reverse'},'*'),boostChannel:a=>window.postMessage({type:'RERANK_TEST',command:'boostChannel',arg:a},'*'),boostKeyword:a=>window.postMessage({type:'RERANK_TEST',command:'boostKeyword',arg:a},'*'),hideKeyword:a=>window.postMessage({type:'RERANK_TEST',command:'hideKeyword',arg:a},'*'),reset:()=>window.postMessage({type:'RERANK_TEST',command:'reset'},'*'),list:()=>window.postMessage({type:'RERANK_TEST',command:'list'},'*'),run:()=>window.postMessage({type:'RERANK_TEST',command:'run'},'*'),status:()=>window.postMessage({type:'RERANK_TEST',command:'status'},'*'),stopLoading:()=>window.postMessage({type:'RERANK_TEST',command:'stopLoading'},'*'),resumeLoading:()=>window.postMessage({type:'RERANK_TEST',command:'resumeLoading'},'*'),enable:()=>window.postMessage({type:'RERANK_TEST',command:'enable'},'*'),help:()=>window.postMessage({type:'RERANK_TEST',command:'help'},'*')}; rt.help()");
