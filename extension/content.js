@@ -9,13 +9,23 @@
  * 4. RENDER  - Update the page to reflect our new feed order
  */
 
-console.log("[Rerank Everything] Extension loaded on YouTube");
-
 // ============================================================
 // CONFIG
 // ============================================================
 
+const DEBUG = false;
 const MAX_CARDS = 25;
+
+// Logging helper - only logs when DEBUG is true
+function log(...args) {
+  if (DEBUG) console.log("[Rerank Everything]", ...args);
+}
+
+// State tracking
+let isProcessing = false;
+let processedVideoIds = new Set();
+
+console.log("[Rerank] Ready. DEBUG=" + DEBUG);
 
 // ============================================================
 // SELECTORS - Based on DeArrow's comprehensive YouTube DOM knowledge
@@ -244,8 +254,8 @@ function scrapeVideoData() {
     });
   });
 
-  console.log("[Rerank Everything] Duplicates skipped: " + duplicatesSkipped);
-  console.log("[Rerank Everything] Unique cards extracted: " + cards.length + " (max: " + MAX_CARDS + ")");
+  log("Duplicates skipped:", duplicatesSkipped);
+  log("Unique cards extracted:", cards.length, "(max:", MAX_CARDS + ")");
 
   return cards;
 }
@@ -408,9 +418,7 @@ function reorderVideos(cards) {
     boostedCount: boostedCount
   });
 
-  console.log(
-    "[Rerank Everything] Hidden: " + hiddenCount + ", Boosted: " + boostedCount
-  );
+  log("Hidden:", hiddenCount, "Boosted:", boostedCount);
 }
 
 // ============================================================
@@ -418,6 +426,7 @@ function reorderVideos(cards) {
 // ============================================================
 
 function debugLogCards(cards) {
+  if (!DEBUG) return;
   console.log("[Rerank Everything] Extracted Video Cards:");
   cards.slice(0, 5).forEach((card, i) => {
     console.log("  Card " + i + ":");
@@ -426,14 +435,6 @@ function debugLogCards(cards) {
     console.log("    Video ID: " + card.data.videoId);
     console.log("    Thumbnail: " + (card.data.thumbnailSrc ? "YES" : "NO"));
     console.log("    Channel Logo: " + (card.data.channelLogoSrc ? "YES" : "NO"));
-    console.log("    DOM Elements:", {
-      card: card.dom.card.tagName,
-      thumbnailImg: card.dom.thumbnailImg?.tagName,
-      thumbnailContainer: card.dom.thumbnailContainer?.tagName,
-      titleEl: card.dom.titleEl?.tagName,
-      channelLogo: card.dom.channelLogo?.tagName,
-      linkEl: card.dom.linkEl?.tagName
-    });
   });
 }
 
@@ -442,23 +443,50 @@ function debugLogCards(cards) {
 // ============================================================
 
 function runPipeline() {
+  if (isProcessing) return;
+  
   chrome.storage.local.get(["enabled"], (result) => {
     if (result.enabled === false) {
-      console.log("[Rerank Everything] Extension is disabled");
+      log("Extension is disabled");
       document.documentElement.classList.remove("rerank-active");
       document.querySelectorAll(".rerank-hidden, .rerank-boosted").forEach((el) => {
         el.classList.remove("rerank-hidden", "rerank-boosted");
       });
+      processedVideoIds.clear();
       return;
     }
 
     document.documentElement.classList.add("rerank-active");
+    isProcessing = true;
 
-    console.log("[Rerank Everything] Running pipeline...");
+    log("Running pipeline...");
 
     const videoData = scrapeVideoData();
 
-    if (videoData.length === 0) return;
+    if (videoData.length === 0) {
+      isProcessing = false;
+      return;
+    }
+
+    // Check if we have any NEW videos
+    let hasNewVideos = false;
+    videoData.forEach(card => {
+      if (card.data.videoId && !processedVideoIds.has(card.data.videoId)) {
+        hasNewVideos = true;
+      }
+    });
+
+    // If no new videos, skip processing
+    if (!hasNewVideos && processedVideoIds.size > 0) {
+      log("No new videos, skipping");
+      isProcessing = false;
+      return;
+    }
+
+    // Track all seen video IDs
+    videoData.forEach(card => {
+      if (card.data.videoId) processedVideoIds.add(card.data.videoId);
+    });
     
     debugLogCards(videoData);
 
@@ -466,7 +494,8 @@ function runPipeline() {
     const reranked = rerankCards(filtered);
     reorderVideos(reranked);
 
-    console.log("[Rerank Everything] Feed updated!");
+    log("Feed updated! Total unique videos:", processedVideoIds.size);
+    isProcessing = false;
   });
 }
 
@@ -500,7 +529,8 @@ window.addEventListener("message", function(event) {
 
   switch (command) {
     case "shuffle": {
-      console.log("[Rerank Everything] Shuffling videos...");
+      isProcessing = true;
+      console.log("[Rerank] Shuffling videos...");
       const cards = scrapeVideoData();
       for (let i = cards.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -508,22 +538,26 @@ window.addEventListener("message", function(event) {
       }
       cards.forEach((card, i) => { card.score = cards.length - i; });
       reorderVideos(cards);
-      console.log("[Rerank Everything] Shuffled " + cards.length + " videos!");
+      console.log("[Rerank] Shuffled " + cards.length + " videos!");
+      isProcessing = false;
       break;
     }
 
     case "reverse": {
-      console.log("[Rerank Everything] Reversing video order...");
+      isProcessing = true;
+      console.log("[Rerank] Reversing video order...");
       const cards = scrapeVideoData();
       cards.forEach((card, i) => { card.score = cards.length - i; });
       cards.reverse();
       reorderVideos(cards);
-      console.log("[Rerank Everything] Reversed " + cards.length + " videos!");
+      console.log("[Rerank] Reversed " + cards.length + " videos!");
+      isProcessing = false;
       break;
     }
 
     case "boostChannel": {
-      console.log("[Rerank Everything] Boosting channel: " + arg);
+      isProcessing = true;
+      console.log("[Rerank] Boosting channel: " + arg);
       const cards = scrapeVideoData();
       cards.forEach((card) => {
         if (card.data.channelName.toLowerCase().includes(arg.toLowerCase())) {
@@ -534,11 +568,13 @@ window.addEventListener("message", function(event) {
         }
       });
       reorderVideos(cards.filter(c => c.score > 0).concat(cards.filter(c => c.score === 0)));
+      isProcessing = false;
       break;
     }
 
     case "boostKeyword": {
-      console.log("[Rerank Everything] Boosting keyword: " + arg);
+      isProcessing = true;
+      console.log("[Rerank] Boosting keyword: " + arg);
       const cards = scrapeVideoData();
       cards.forEach((card) => {
         if (card.data.title.toLowerCase().includes(arg.toLowerCase())) {
@@ -549,11 +585,13 @@ window.addEventListener("message", function(event) {
         }
       });
       reorderVideos(cards.filter(c => c.score > 0).concat(cards.filter(c => c.score === 0)));
+      isProcessing = false;
       break;
     }
 
     case "hideKeyword": {
-      console.log("[Rerank Everything] Hiding keyword: " + arg);
+      isProcessing = true;
+      console.log("[Rerank] Hiding keyword: " + arg);
       const cards = scrapeVideoData();
       let hidden = 0;
       cards.forEach((card) => {
@@ -563,23 +601,26 @@ window.addEventListener("message", function(event) {
         }
       });
       reorderVideos(cards);
-      console.log("[Rerank Everything] Hidden " + hidden + " videos");
+      console.log("[Rerank] Hidden " + hidden + " videos");
+      isProcessing = false;
       break;
     }
 
     case "reset": {
-      console.log("[Rerank Everything] Resetting order...");
+      isProcessing = true;
+      console.log("[Rerank] Resetting order...");
       const cards = scrapeVideoData();
       cards.sort((a, b) => a.originalIndex - b.originalIndex);
       cards.forEach(c => { c.visible = true; c.score = 0; });
       reorderVideos(cards);
-      console.log("[Rerank Everything] Reset " + cards.length + " videos!");
+      console.log("[Rerank] Reset " + cards.length + " videos!");
+      isProcessing = false;
       break;
     }
 
     case "list": {
       const cards = scrapeVideoData();
-      console.log("[Rerank Everything] Listing " + cards.length + " videos:");
+      console.log("[Rerank] Listing " + cards.length + " videos:");
       cards.forEach((card, i) => {
         console.log((i + 1) + ". [" + card.data.videoId + "] " + card.data.title + " - " + card.data.channelName);
       });
@@ -587,13 +628,24 @@ window.addEventListener("message", function(event) {
     }
 
     case "run": {
+      processedVideoIds.clear();
       runPipeline();
+      console.log("[Rerank] Pipeline re-run");
+      break;
+    }
+
+    case "status": {
+      console.log("[Rerank] Status:");
+      console.log("  - Unique videos seen:", processedVideoIds.size);
+      console.log("  - MAX_CARDS:", MAX_CARDS);
+      console.log("  - DEBUG:", DEBUG);
+      console.log("  - Processing:", isProcessing);
       break;
     }
 
     case "help": {
       console.log(`
-[Rerank Everything] Test Commands:
+[Rerank] Test Commands:
   rt.shuffle()           - Randomly shuffle videos
   rt.reverse()           - Reverse current order
   rt.boostChannel(name)  - Boost videos from a channel
@@ -602,21 +654,15 @@ window.addEventListener("message", function(event) {
   rt.reset()             - Reset to original order
   rt.list()              - List all videos with IDs
   rt.run()               - Re-run the pipeline
+  rt.status()            - Show current status
   rt.help()              - Show this help
-
-Or use postMessage directly:
-  window.postMessage({ type: 'RERANK_TEST', command: 'shuffle' }, '*')
 `);
       break;
     }
 
     default:
-      console.log("[Rerank Everything] Unknown command: " + command);
+      console.log("[Rerank] Unknown command: " + command);
   }
 });
 
-console.log(`[Rerank Everything] Test interface loaded!
-Paste this into console to enable test commands:
-
-var rt={shuffle:()=>window.postMessage({type:'RERANK_TEST',command:'shuffle'},'*'),reverse:()=>window.postMessage({type:'RERANK_TEST',command:'reverse'},'*'),boostChannel:a=>window.postMessage({type:'RERANK_TEST',command:'boostChannel',arg:a},'*'),boostKeyword:a=>window.postMessage({type:'RERANK_TEST',command:'boostKeyword',arg:a},'*'),hideKeyword:a=>window.postMessage({type:'RERANK_TEST',command:'hideKeyword',arg:a},'*'),reset:()=>window.postMessage({type:'RERANK_TEST',command:'reset'},'*'),list:()=>window.postMessage({type:'RERANK_TEST',command:'list'},'*'),run:()=>window.postMessage({type:'RERANK_TEST',command:'run'},'*'),help:()=>window.postMessage({type:'RERANK_TEST',command:'help'},'*')}; rt.help()
-`);
+console.log("[Rerank] Ready. Paste this to get test commands: var rt={shuffle:()=>window.postMessage({type:'RERANK_TEST',command:'shuffle'},'*'),reverse:()=>window.postMessage({type:'RERANK_TEST',command:'reverse'},'*'),boostChannel:a=>window.postMessage({type:'RERANK_TEST',command:'boostChannel',arg:a},'*'),boostKeyword:a=>window.postMessage({type:'RERANK_TEST',command:'boostKeyword',arg:a},'*'),hideKeyword:a=>window.postMessage({type:'RERANK_TEST',command:'hideKeyword',arg:a},'*'),reset:()=>window.postMessage({type:'RERANK_TEST',command:'reset'},'*'),list:()=>window.postMessage({type:'RERANK_TEST',command:'list'},'*'),run:()=>window.postMessage({type:'RERANK_TEST',command:'run'},'*'),status:()=>window.postMessage({type:'RERANK_TEST',command:'status'},'*'),help:()=>window.postMessage({type:'RERANK_TEST',command:'help'},'*')}; rt.help()");
