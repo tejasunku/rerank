@@ -3,7 +3,7 @@
  * This runs on every YouTube page and is the main entry point.
  *
  * The pipeline:
- * 1. SCRAPE  - Find all video cards on the page, extract their data
+ * 1. SCRAPE  - Find all video cards on the page, extract DOM elements and data
  * 2. FILTER  - Remove videos that match our block rules
  * 3. RERANK  - Score the remaining videos and reorder them
  * 4. RENDER  - Update the page to reflect our new feed order
@@ -12,78 +12,274 @@
 console.log("[Rerank Everything] Extension loaded on YouTube");
 
 // ============================================================
-// STEP 1: SCRAPER
-// Find all video recommendation cards on the page and extract
-// their data: title, channel name, and a reference to the element
+// SELECTORS - Based on DeArrow's comprehensive YouTube DOM knowledge
+// These handle desktop, mobile, and various YouTube layouts
 // ============================================================
 
-function scrapeVideoCards() {
-  const cards = [];
+const VIDEO_CARD_SELECTORS = [
+  "ytd-rich-item-renderer",
+  "ytd-video-renderer",
+  "ytd-compact-video-renderer",
+  "ytd-grid-video-renderer",
+  "ytd-playlist-video-renderer",
+  "ytd-compact-playlist-renderer",
+  "ytd-rich-grid-media",
+  "ytd-movie-renderer",
+  "ytd-compact-movie-renderer",
+  "ytd-grid-movie-renderer",
+  "ytd-radio-renderer",
+  "ytd-compact-radio-renderer",
+  "ytd-playlist-renderer",
+  "ytd-grid-playlist-renderer",
+  "ytd-reel-item-renderer",
+  "ytd-structured-description-video-lockup-renderer",
+  "yt-lockup-view-model"
+].join(", ");
 
-  // YouTube uses different elements depending on the page:
-  //   Homepage:     ytd-rich-item-renderer
-  //   Search:       ytd-video-renderer
-  //   Sidebar:      ytd-compact-video-renderer
-  const videoElements = document.querySelectorAll(
-    "ytd-rich-item-renderer, ytd-video-renderer, ytd-compact-video-renderer"
-  );
+const THUMBNAIL_SELECTORS = [
+  "ytd-thumbnail:not([hidden]) img",
+  "ytd-playlist-thumbnail yt-image:not(.blurred-image) img",
+  "yt-img-shadow.ytd-hero-playlist-thumbnail-renderer img",
+  "yt-thumbnail-view-model *:not(.ytThumbnailViewModelBlurredImage) img",
+  ".ux-thumb-wrap img",
+  "yt-img-shadow img",
+  "img.video-thumbnail-img"
+];
+
+const TITLE_SELECTORS = [
+  "#video-title",
+  "#movie-title",
+  "#description #title",
+  ".yt-lockup-metadata-view-model-wiz__title .yt-core-attributed-string",
+  ".yt-lockup-metadata-view-model__title .yt-core-attributed-string",
+  ".ShortsLockupViewModelHostMetadataTitle .yt-core-attributed-string",
+  ".title",
+  ".yt-uix-tile-link",
+  ".lohp-video-link"
+];
+
+const CHANNEL_SELECTORS = [
+  "ytd-channel-name #text",
+  "ytd-channel-name yt-formatted-string",
+  "#channel-name #text",
+  "#channel-name yt-formatted-string",
+  ".channel-name",
+  ".yt-channel-title",
+  "ytd-video-meta-block ytd-channel-name a",
+  "yt-formatted-string.ytd-channel-name"
+];
+
+// ============================================================
+// EXTRACTION FUNCTIONS
+// ============================================================
+
+function extractThumbnailImg(cardElement) {
+  for (const selector of THUMBNAIL_SELECTORS) {
+    const img = cardElement.querySelector(selector);
+    if (img && img.src) return img;
+  }
+  return null;
+}
+
+function extractThumbnailContainer(cardElement) {
+  const containerSelectors = [
+    "ytd-thumbnail",
+    "ytd-playlist-thumbnail",
+    "yt-thumbnail-view-model",
+    ".ux-thumb-wrap",
+    ".thumbnail-container"
+  ];
+  
+  for (const selector of containerSelectors) {
+    const container = cardElement.querySelector(selector);
+    if (container) return container;
+  }
+  return null;
+}
+
+function extractTitleEl(cardElement) {
+  for (const selector of TITLE_SELECTORS) {
+    const el = cardElement.querySelector(selector);
+    if (el && el.textContent) return el;
+  }
+  return null;
+}
+
+function extractChannelName(cardElement) {
+  for (const selector of CHANNEL_SELECTORS) {
+    const el = cardElement.querySelector(selector);
+    if (el && el.textContent) {
+      return el.textContent.trim();
+    }
+  }
+  return null;
+}
+
+function extractChannelLogo(cardElement) {
+  const logoSelectors = [
+    "ytd-channel-avatar img",
+    "yt-img-shadow.channel-avatar img",
+    "ytd-channel-name img",
+    "#channel-thumbnail img",
+    "a.yt-simple-endpoint img",
+    ".channel-avatar img"
+  ];
+  
+  for (const selector of logoSelectors) {
+    const img = cardElement.querySelector(selector);
+    if (img && img.src) return img;
+  }
+  return null;
+}
+
+function extractVideoLink(cardElement) {
+  const linkSelectors = [
+    "a#thumbnail",
+    "a#video-title",
+    "a[href*='watch?v=']",
+    "a[href*='shorts/']",
+    "a.yt-uix-tile-link",
+    "a.yt-simple-endpoint"
+  ];
+  
+  for (const selector of linkSelectors) {
+    const link = cardElement.querySelector(selector);
+    if (link && link.href) return link;
+  }
+  return null;
+}
+
+function extractVideoId(linkEl) {
+  if (!linkEl || !linkEl.href) return null;
+  
+  const url = linkEl.href;
+  const watchMatch = url.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+  if (watchMatch) return watchMatch[1];
+  
+  const shortsMatch = url.match(/\/shorts\/([a-zA-Z0-9_-]{11})/);
+  if (shortsMatch) return shortsMatch[1];
+  
+  return null;
+}
+
+function extractViewCount(cardElement) {
+  const metadataSelectors = [
+    "ytd-video-meta-block #metadata-line",
+    "#metadata-line",
+    ".metadata-line",
+    "ytd-grid-video-renderer #metadata-line"
+  ];
+  
+  for (const selector of metadataSelectors) {
+    const el = cardElement.querySelector(selector);
+    if (el) {
+      const text = el.textContent;
+      const viewMatch = text.match(/(\d[\d,.]*\s*(views?|views))/i);
+      if (viewMatch) return viewMatch[0];
+    }
+  }
+  return null;
+}
+
+// ============================================================
+// SCRAPE VIDEO DATA
+// Find all video cards and extract their DOM elements and data
+// ============================================================
+
+function scrapeVideoData() {
+  const cards = [];
+  const videoElements = document.querySelectorAll(VIDEO_CARD_SELECTORS);
 
   videoElements.forEach((element) => {
-    const titleEl = element.querySelector("#video-title");
-    const channelEl = element.querySelector(
-      "ytd-channel-name #text, #channel-name #text, ytd-channel-name yt-formatted-string"
-    );
+    const titleEl = extractTitleEl(element);
+    
+    if (!titleEl) return;
+    
+    const thumbnailImg = extractThumbnailImg(element);
+    const thumbnailContainer = extractThumbnailContainer(element);
+    const channelName = extractChannelName(element);
+    const channelLogo = extractChannelLogo(element);
+    const linkEl = extractVideoLink(element);
+    const videoId = extractVideoId(linkEl);
+    const viewCount = extractViewCount(element);
 
-    if (titleEl) {
-      cards.push({
-        element: element,
+    cards.push({
+      dom: {
+        card: element,
+        thumbnailImg: thumbnailImg,
+        thumbnailContainer: thumbnailContainer,
+        titleEl: titleEl,
+        channelLogo: channelLogo,
+        linkEl: linkEl
+      },
+      data: {
         title: (titleEl.textContent || "").trim(),
-        channel: channelEl ? (channelEl.textContent || "").trim() : "",
-        visible: true,
-        score: 0,
-      });
-    }
+        channelName: channelName || "",
+        thumbnailSrc: thumbnailImg?.src || null,
+        channelLogoSrc: channelLogo?.src || null,
+        videoId: videoId,
+        viewCount: viewCount
+      },
+      visible: true,
+      score: 0,
+      originalIndex: cards.length
+    });
   });
 
   return cards;
 }
 
 // ============================================================
-// STEP 2: FILTER
-// Given a list of scraped cards, decide which ones to HIDE
-// based on the block rules below
+// FIND CONTAINER
+// YouTube uses different container layouts for different pages
 // ============================================================
 
-// *** CUSTOMIZE THESE! ***
-// Add channels and keywords you want to filter out.
-// Uncomment the examples or add your own.
-const BLOCK_RULES = {
-  // Channels to always hide (case-insensitive)
-  blockedChannels: [
-    // "ChannelNameHere",
-  ],
+function findContainer(card) {
+  let container = card.dom.card.parentElement;
+  
+  while (container) {
+    const tagName = container.tagName.toLowerCase();
+    
+    if (
+      tagName === "ytd-rich-grid-renderer" ||
+      tagName === "ytd-item-section-renderer" ||
+      tagName === "ytd-section-list-renderer" ||
+      tagName === "ytd-watch-next-secondary-results-renderer" ||
+      tagName === "ytd-shelf-renderer" ||
+      tagName === "ytd-expanded-shelf-contents-renderer" ||
+      tagName === "ytd-grid-renderer" ||
+      tagName === "ytd-playlist-panel-renderer" ||
+      tagName.startsWith("ytd-") && container.getAttribute("role") === "main"
+    ) {
+      return container;
+    }
+    
+    if (tagName === "body") break;
+    container = container.parentElement;
+  }
+  
+  return card.dom.card.parentElement;
+}
 
-  // If a title contains any of these keywords, hide it (case-insensitive)
-  blockedKeywords: [
-    // "prank",
-    // "drama",
-    // "clickbait",
-    // "you won't believe",
-    // "gone wrong",
-  ],
+// ============================================================
+// STEP 2: FILTER
+// Decide which videos to hide based on block rules
+// ============================================================
+
+const BLOCK_RULES = {
+  blockedChannels: [],
+  blockedKeywords: []
 };
 
 function filterCards(cards) {
   return cards.map((card) => {
-    const titleLower = card.title.toLowerCase();
-    const channelLower = card.channel.toLowerCase();
+    const titleLower = card.data.title.toLowerCase();
+    const channelLower = card.data.channelName.toLowerCase();
 
-    // Check if the channel is in the blocked list
     const channelBlocked = BLOCK_RULES.blockedChannels.some((ch) =>
       channelLower.includes(ch.toLowerCase())
     );
 
-    // Check if any blocked keyword appears in the title
     const keywordBlocked = BLOCK_RULES.blockedKeywords.some((kw) =>
       titleLower.includes(kw.toLowerCase())
     );
@@ -95,26 +291,12 @@ function filterCards(cards) {
 
 // ============================================================
 // STEP 3: RERANKER
-// Score the remaining visible videos so we know which ones
-// are the best. Higher score = better content.
+// Score videos and sort them (scoring logic to be implemented later)
 // ============================================================
 
-// *** CUSTOMIZE THESE! ***
-// Add keywords and channels you want to see MORE of.
 const BOOST_RULES = {
-  // Keywords in titles that should get boosted (each match = +10 points)
-  boostedKeywords: [
-    // "tutorial",
-    // "explained",
-    // "how to",
-    // "deep dive",
-  ],
-
-  // Channels whose content should always rank higher (+20 points)
-  boostedChannels: [
-    // "3Blue1Brown",
-    // "Fireship",
-  ],
+  boostedKeywords: [],
+  boostedChannels: []
 };
 
 function rerankCards(cards) {
@@ -123,17 +305,15 @@ function rerankCards(cards) {
       if (!card.visible) return card;
 
       let score = 0;
-      const titleLower = card.title.toLowerCase();
-      const channelLower = card.channel.toLowerCase();
+      const titleLower = card.data.title.toLowerCase();
+      const channelLower = card.data.channelName.toLowerCase();
 
-      // Boost by keyword match in title
       BOOST_RULES.boostedKeywords.forEach((kw) => {
         if (titleLower.includes(kw.toLowerCase())) {
           score += 10;
         }
       });
 
-      // Boost by channel match
       BOOST_RULES.boostedChannels.forEach((ch) => {
         if (channelLower.includes(ch.toLowerCase())) {
           score += 20;
@@ -144,108 +324,142 @@ function rerankCards(cards) {
       return card;
     })
     .sort((a, b) => {
-      // Hidden cards go to the end
       if (a.visible !== b.visible) return a.visible ? -1 : 1;
-      // Among visible cards, sort by score (highest first)
       return b.score - a.score;
     });
 }
 
 // ============================================================
-// STEP 4: RENDER
-// Apply the filter and rerank results to the actual page.
-// - Filtered videos get hidden with a CSS class
-// - Boosted videos get a green outline
+// STEP 4: REORDER VIDEOS
+// Move DOM nodes to reflect the new order
 // ============================================================
 
-function applyChanges(cards) {
-  let hiddenCount = 0;
-  let boostedCount = 0;
+function reorderVideos(cards) {
+  if (cards.length === 0) return;
 
+  const containerGroups = new Map();
+  
   cards.forEach((card) => {
-    if (!card.visible) {
-      // Hide filtered-out videos
-      card.element.classList.add("rerank-hidden");
-      card.element.classList.remove("rerank-boosted");
-      hiddenCount++;
-    } else {
-      // Show kept videos
-      card.element.classList.remove("rerank-hidden");
-
-      // Highlight boosted videos with a green outline
-      if (card.score > 0) {
-        card.element.classList.add("rerank-boosted");
-        boostedCount++;
-      } else {
-        card.element.classList.remove("rerank-boosted");
-      }
+    const container = findContainer(card);
+    if (!container) return;
+    
+    const key = container.tagName + "_" + container.className;
+    if (!containerGroups.has(key)) {
+      containerGroups.set(key, { container, cards: [] });
     }
+    containerGroups.get(key).cards.push(card);
   });
 
-  // Save stats so the popup can display them
-  chrome.storage.local.set({ hiddenCount, boostedCount });
+  containerGroups.forEach((group) => {
+    const { container, cards: groupCards } = group;
+    
+    const visibleCards = groupCards.filter((c) => c.visible);
+    const hiddenCards = groupCards.filter((c) => !c.visible);
+
+    visibleCards.forEach((card) => {
+      card.dom.card.classList.remove("rerank-hidden");
+      if (card.score > 0) {
+        card.dom.card.classList.add("rerank-boosted");
+      } else {
+        card.dom.card.classList.remove("rerank-boosted");
+      }
+    });
+
+    hiddenCards.forEach((card) => {
+      card.dom.card.classList.add("rerank-hidden");
+      card.dom.card.classList.remove("rerank-boosted");
+    });
+
+    visibleCards.forEach((card) => {
+      container.appendChild(card.dom.card);
+    });
+
+    hiddenCards.forEach((card) => {
+      container.appendChild(card.dom.card);
+    });
+  });
+
+  const hiddenCount = cards.filter((c) => !c.visible).length;
+  const boostedCount = cards.filter((c) => c.visible && c.score > 0).length;
+
+  chrome.storage.local.set({
+    hiddenCount: hiddenCount,
+    boostedCount: boostedCount
+  });
 
   console.log(
-    `[Rerank Everything] Hidden: ${hiddenCount}, Boosted: ${boostedCount}`
+    "[Rerank Everything] Hidden: " + hiddenCount + ", Boosted: " + boostedCount
   );
 }
 
 // ============================================================
-// MAIN: Wire it all together
+// DEBUG HELPER - Print extracted data for inspection
+// ============================================================
+
+function debugLogCards(cards) {
+  console.log("[Rerank Everything] Extracted Video Cards:");
+  cards.slice(0, 5).forEach((card, i) => {
+    console.log("  Card " + i + ":");
+    console.log("    Title: " + card.data.title);
+    console.log("    Channel: " + card.data.channelName);
+    console.log("    Video ID: " + card.data.videoId);
+    console.log("    Thumbnail: " + (card.data.thumbnailSrc ? "YES" : "NO"));
+    console.log("    Channel Logo: " + (card.data.channelLogoSrc ? "YES" : "NO"));
+    console.log("    DOM Elements:", {
+      card: card.dom.card.tagName,
+      thumbnailImg: card.dom.thumbnailImg?.tagName,
+      thumbnailContainer: card.dom.thumbnailContainer?.tagName,
+      titleEl: card.dom.titleEl?.tagName,
+      channelLogo: card.dom.channelLogo?.tagName,
+      linkEl: card.dom.linkEl?.tagName
+    });
+  });
+}
+
+// ============================================================
+// MAIN PIPELINE
 // ============================================================
 
 function runPipeline() {
-  // Check if the extension is enabled (toggle in popup)
   chrome.storage.local.get(["enabled"], (result) => {
     if (result.enabled === false) {
       console.log("[Rerank Everything] Extension is disabled");
-      // Remove all our CSS classes when disabled
       document.documentElement.classList.remove("rerank-active");
-      document
-        .querySelectorAll(".rerank-hidden, .rerank-boosted")
-        .forEach((el) => {
-          el.classList.remove("rerank-hidden", "rerank-boosted");
-        });
+      document.querySelectorAll(".rerank-hidden, .rerank-boosted").forEach((el) => {
+        el.classList.remove("rerank-hidden", "rerank-boosted");
+      });
       return;
     }
 
-    // Light pink background proves the extension is running
     document.documentElement.classList.add("rerank-active");
 
     console.log("[Rerank Everything] Running pipeline...");
 
-    const cards = scrapeVideoCards();
-    console.log(`[Rerank Everything] Found ${cards.length} video cards`);
+    const videoData = scrapeVideoData();
+    console.log("[Rerank Everything] Found " + videoData.length + " video cards");
 
-    if (cards.length === 0) return;
+    if (videoData.length === 0) return;
+    
+    debugLogCards(videoData);
 
-    const filtered = filterCards(cards);
+    const filtered = filterCards(videoData);
     const reranked = rerankCards(filtered);
-    applyChanges(reranked);
+    reorderVideos(reranked);
 
     console.log("[Rerank Everything] Feed updated!");
   });
 }
 
-// YouTube is a Single Page App - the page doesn't fully reload
-// when you navigate. We need to re-run our pipeline when the
-// page content changes.
-//
-// MutationObserver watches for DOM changes and re-triggers our pipeline.
-
 let debounceTimer = null;
 
-const observer = new MutationObserver(() => {
-  // Debounce: wait for YouTube to finish loading before we act
+const observer = new MutationObserver(function() {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(runPipeline, 1500);
 });
 
-// Start observing once the page is ready
 observer.observe(document.body, {
   childList: true,
-  subtree: true,
+  subtree: true
 });
 
-// Also run once immediately
 runPipeline();
