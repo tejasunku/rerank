@@ -12,6 +12,12 @@
 console.log("[Rerank Everything] Extension loaded on YouTube");
 
 // ============================================================
+// CONFIG
+// ============================================================
+
+const MAX_CARDS = 25;
+
+// ============================================================
 // SELECTORS - Based on DeArrow's comprehensive YouTube DOM knowledge
 // These handle desktop, mobile, and various YouTube layouts
 // ============================================================
@@ -184,15 +190,19 @@ function extractViewCount(cardElement) {
 // ============================================================
 // SCRAPE VIDEO DATA
 // Find all video cards and extract their DOM elements and data
+// Deduplicates by videoId and limits to MAX_CARDS
 // ============================================================
 
 function scrapeVideoData() {
+  const seenVideoIds = new Set();
   const cards = [];
+  let duplicatesSkipped = 0;
   const videoElements = document.querySelectorAll(VIDEO_CARD_SELECTORS);
 
   videoElements.forEach((element) => {
-    const titleEl = extractTitleEl(element);
+    if (cards.length >= MAX_CARDS) return;
     
+    const titleEl = extractTitleEl(element);
     if (!titleEl) return;
     
     const thumbnailImg = extractThumbnailImg(element);
@@ -202,6 +212,14 @@ function scrapeVideoData() {
     const linkEl = extractVideoLink(element);
     const videoId = extractVideoId(linkEl);
     const viewCount = extractViewCount(element);
+
+    if (videoId && seenVideoIds.has(videoId)) {
+      duplicatesSkipped++;
+      return;
+    }
+    if (videoId) {
+      seenVideoIds.add(videoId);
+    }
 
     cards.push({
       dom: {
@@ -225,6 +243,9 @@ function scrapeVideoData() {
       originalIndex: cards.length
     });
   });
+
+  console.log("[Rerank Everything] Duplicates skipped: " + duplicatesSkipped);
+  console.log("[Rerank Everything] Unique cards extracted: " + cards.length + " (max: " + MAX_CARDS + ")");
 
   return cards;
 }
@@ -436,7 +457,6 @@ function runPipeline() {
     console.log("[Rerank Everything] Running pipeline...");
 
     const videoData = scrapeVideoData();
-    console.log("[Rerank Everything] Found " + videoData.length + " video cards");
 
     if (videoData.length === 0) return;
     
