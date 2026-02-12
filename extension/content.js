@@ -485,12 +485,18 @@ observer.observe(document.body, {
 runPipeline();
 
 // ============================================================
-// TESTING INTERFACE - Uses custom events for page-to-extension communication
-// Usage: Open console on YouTube and type rerankTest.shuffle()
+// TESTING INTERFACE - Uses window.postMessage for communication
+// Usage in console:
+//   window.postMessage({ type: 'RERANK_TEST', command: 'shuffle' }, '*')
+//   window.postMessage({ type: 'RERANK_TEST', command: 'list' }, '*')
+// Or paste the helper function below into console first
 // ============================================================
 
-function handleTestCommand(event) {
-  const { command, args } = event.detail;
+window.addEventListener("message", function(event) {
+  if (event.source !== window) return;
+  if (!event.data || event.data.type !== "RERANK_TEST") return;
+
+  const { command, arg } = event.data;
 
   switch (command) {
     case "shuffle": {
@@ -517,11 +523,10 @@ function handleTestCommand(event) {
     }
 
     case "boostChannel": {
-      const channelName = args[0];
-      console.log("[Rerank Everything] Boosting channel: " + channelName);
+      console.log("[Rerank Everything] Boosting channel: " + arg);
       const cards = scrapeVideoData();
       cards.forEach((card) => {
-        if (card.data.channelName.toLowerCase().includes(channelName.toLowerCase())) {
+        if (card.data.channelName.toLowerCase().includes(arg.toLowerCase())) {
           card.score = 1000;
           console.log("  Boosted: " + card.data.title + " by " + card.data.channelName);
         } else {
@@ -533,11 +538,10 @@ function handleTestCommand(event) {
     }
 
     case "boostKeyword": {
-      const keyword = args[0];
-      console.log("[Rerank Everything] Boosting keyword: " + keyword);
+      console.log("[Rerank Everything] Boosting keyword: " + arg);
       const cards = scrapeVideoData();
       cards.forEach((card) => {
-        if (card.data.title.toLowerCase().includes(keyword.toLowerCase())) {
+        if (card.data.title.toLowerCase().includes(arg.toLowerCase())) {
           card.score = 1000;
           console.log("  Boosted: " + card.data.title);
         } else {
@@ -549,12 +553,11 @@ function handleTestCommand(event) {
     }
 
     case "hideKeyword": {
-      const keyword = args[0];
-      console.log("[Rerank Everything] Hiding keyword: " + keyword);
+      console.log("[Rerank Everything] Hiding keyword: " + arg);
       const cards = scrapeVideoData();
       let hidden = 0;
       cards.forEach((card) => {
-        if (card.data.title.toLowerCase().includes(keyword.toLowerCase())) {
+        if (card.data.title.toLowerCase().includes(arg.toLowerCase())) {
           card.visible = false;
           hidden++;
         }
@@ -565,7 +568,7 @@ function handleTestCommand(event) {
     }
 
     case "reset": {
-      console.log("[Rerank Everything] Resetting order (by originalIndex)...");
+      console.log("[Rerank Everything] Resetting order...");
       const cards = scrapeVideoData();
       cards.sort((a, b) => a.originalIndex - b.originalIndex);
       cards.forEach(c => { c.visible = true; c.score = 0; });
@@ -584,50 +587,36 @@ function handleTestCommand(event) {
     }
 
     case "run": {
-      console.log("[Rerank Everything] Running pipeline...");
       runPipeline();
+      break;
+    }
+
+    case "help": {
+      console.log(`
+[Rerank Everything] Test Commands:
+  rt.shuffle()           - Randomly shuffle videos
+  rt.reverse()           - Reverse current order
+  rt.boostChannel(name)  - Boost videos from a channel
+  rt.boostKeyword(word)  - Boost videos with keyword in title
+  rt.hideKeyword(word)   - Hide videos with keyword in title
+  rt.reset()             - Reset to original order
+  rt.list()              - List all videos with IDs
+  rt.run()               - Re-run the pipeline
+  rt.help()              - Show this help
+
+Or use postMessage directly:
+  window.postMessage({ type: 'RERANK_TEST', command: 'shuffle' }, '*')
+`);
       break;
     }
 
     default:
       console.log("[Rerank Everything] Unknown command: " + command);
   }
-}
+});
 
-document.addEventListener("rerank-test-command", handleTestCommand);
+console.log(`[Rerank Everything] Test interface loaded!
+Paste this into console to enable test commands:
 
-const testScript = document.createElement("script");
-testScript.textContent = `
-  window.rerankTest = {
-    _send: function(command, args) {
-      document.dispatchEvent(new CustomEvent("rerank-test-command", {
-        detail: { command: command, args: args || [] }
-      }));
-    },
-    shuffle: function() { this._send("shuffle"); },
-    reverse: function() { this._send("reverse"); },
-    boostChannel: function(name) { this._send("boostChannel", [name]); },
-    boostKeyword: function(word) { this._send("boostKeyword", [word]); },
-    hideKeyword: function(word) { this._send("hideKeyword", [word]); },
-    reset: function() { this._send("reset"); },
-    list: function() { this._send("list"); },
-    run: function() { this._send("run"); },
-    help: function() {
-      console.log(\`
-[Rerank Everything] Test Commands:
-  rerankTest.shuffle()          - Randomly shuffle videos
-  rerankTest.reverse()          - Reverse current order
-  rerankTest.boostChannel(name) - Boost videos from a channel
-  rerankTest.boostKeyword(word) - Boost videos with keyword in title
-  rerankTest.hideKeyword(word)  - Hide videos with keyword in title
-  rerankTest.reset()            - Reset to original order
-  rerankTest.list()             - List all videos with IDs
-  rerankTest.run()              - Re-run the pipeline
-  rerankTest.help()             - Show this help
-\`);
-    }
-  };
-  console.log("[Rerank Everything] Test interface loaded! Type rerankTest.help() for commands.");
-`;
-(document.head || document.documentElement).appendChild(testScript);
-testScript.remove();
+var rt={shuffle:()=>window.postMessage({type:'RERANK_TEST',command:'shuffle'},'*'),reverse:()=>window.postMessage({type:'RERANK_TEST',command:'reverse'},'*'),boostChannel:a=>window.postMessage({type:'RERANK_TEST',command:'boostChannel',arg:a},'*'),boostKeyword:a=>window.postMessage({type:'RERANK_TEST',command:'boostKeyword',arg:a},'*'),hideKeyword:a=>window.postMessage({type:'RERANK_TEST',command:'hideKeyword',arg:a},'*'),reset:()=>window.postMessage({type:'RERANK_TEST',command:'reset'},'*'),list:()=>window.postMessage({type:'RERANK_TEST',command:'list'},'*'),run:()=>window.postMessage({type:'RERANK_TEST',command:'run'},'*'),help:()=>window.postMessage({type:'RERANK_TEST',command:'help'},'*')}; rt.help()
+`);
